@@ -2,7 +2,7 @@
 #create dabase scrapbooks and table scrappedbooks
 
 db_name="scrapbookdb"
-table_name="scrappedbooks"
+table_name="scrapbooktb"
 db_user="myadmin"
 
 function setup_database(){
