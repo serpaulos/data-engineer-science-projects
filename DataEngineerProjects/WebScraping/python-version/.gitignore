@@ -1,0 +1,6 @@
+# Project exclude paths
+/venv/
+.idea
+config.py
+/db/config.py
+/app/config.py
