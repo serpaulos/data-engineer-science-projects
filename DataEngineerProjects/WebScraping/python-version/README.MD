@@ -17,6 +17,7 @@
 ## General Information
 - Project to try simulate one of the several process a Data Engineer can do on a daily basis.
 - This was build to aquire data from a website and load it on a database?
+- Config file was added to .gitignore to protect data
 
 
 ## Technologies Used
