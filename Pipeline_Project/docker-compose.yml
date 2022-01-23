@@ -1,0 +1,202 @@
+version: '3'
+x-airflow-common:
+  &airflow-common
+  build: .
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKEND: 'airflow.api.auth.backend.basic_auth'
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./airflow/data:/opt/airflow/data
+    - ./airflow/parquet_saved:/opt/airflow/parquet_saved
+    - ./airflow/parquet_read:/opt/airflow/parquet_read
+    - ./airflow/config/airflow.cfg:/opt/airflow/airflow.cfg
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres-proj
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  redis:
+    image: redis:latest
+    container_name: redis-proj
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+    restart: always
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-proj
+    environment:
+      MYSQL_ROOT_PASSWORD: stack
+      MYSQL_DATABASE: mysql_tensor
+      MYSQL_USER: stack
+      MYSQL_PASSWORD: stack_tensor
+    ports: 
+      - 3307:3306      
+    volumes:
+      - ./mysql-db:/var/lib/mysql
+    restart: unless-stopped
+
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    container_name: airf-webserv-proj
+    ports:
+      - 8083:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airf-sched-proj
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-worker:
+    <<: *airflow-common
+    container_name: airf-worker-proj
+    command: celery worker
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"'
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
+  flower:
+    <<: *airflow-common
+    container_name: airf-flower-proj
+    command: celery flower
+    ports:
+      - 5555:5555
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  # spark-master:
+  #   image: andreper/spark-master:3.0.0
+  #   container_name: spark-master-proj
+  #   ports:
+  #     - 8080:8080
+  #     - 7077:7077
+  #   volumes:
+  #     - shared-workspace:/opt/workspace
+  #     - ./spark/app:/opt/workspace/data
+
+  # spark-worker-1:
+  #   image: andreper/spark-worker:3.0.0
+  #   container_name: spark-worker-1-proj
+  #   environment:
+  #     - SPARK_WORKER_CORES=1
+  #     - SPARK_WORKER_MEMORY=512m
+  #   ports:
+  #     - 8081:8081
+  #   volumes:
+  #     - shared-workspace:/opt/workspace
+  #     - ./spark/app:/opt/workspace/data
+  #   depends_on:
+  #     - spark-master
+
+  # spark-worker-2:
+  #   image: andreper/spark-worker:3.0.0
+  #   container_name: spark-worker-2-proj
+  #   environment:
+  #     - SPARK_WORKER_CORES=1
+  #     - SPARK_WORKER_MEMORY=512m
+  #   ports:
+  #     - 8082:8081
+  #   volumes:
+  #     - shared-workspace:/opt/workspace
+  #     - ./spark/app:/opt/workspace/data      
+  #   depends_on:
+  #     - spark-master
+
+  jupyter_lab:
+    image: jupyter/all-spark-notebook:2022-01-17
+    container_name: jupyter_notebook-proj 
+    ports: 
+      - "8888:8888"
+    environment: 
+      - JUPYTER_TOKEN=docker
+    volumes: 
+      - ./notebook:/home/jovyan/ 
+
+  minio:
+    image: quay.io/minio/minio
+    container_name: minio-proj
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./datalake:/data
+    environment:
+      MINIO_ROOT_USER: tensorflow
+      MINIO_ROOT_PASSWORD: tensorflow
+    command: server /data --console-address ":9001"
+    restart: always # necessary since it's failing to start sometimes
+
+# volumes:
+#   shared-workspace:
+#     name: "hadoop-distributed-file-system"
+#     driver: local      
+
+networks:
+  projeto-net:
