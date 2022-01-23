@@ -29,3 +29,4 @@ Dockerfile_bck
 move_files_to_bucket_landing-Copy1.ipynb
 *.parquet
 .bash_history
+variables.json
